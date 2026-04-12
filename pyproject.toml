@@ -1,0 +1,13 @@
+[project]
+name = "magnum"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=3.0.2",
+    "openpyxl>=3.1.0",
+    "pyyaml>=6.0",
+    "streamlit>=1.40.0",
+    "plotly>=5.24.0",
+]

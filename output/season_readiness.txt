@@ -1,0 +1,28 @@
+SEASON READINESS SUMMARY
+==================================================
+Technology                 Bandwidth     Status
+--------------------------------------------------
+2.4 Gal                        19.6% ✓ Green
+48oz                           13.6% ✓ Green
+B&J Cups                       45.7% ✓ Green
+BJ Bars                         8.8% ~ Yellow
+BJ PTS                          6.8% ~ Yellow
+Dough Bites                    34.3% ✓ Green
+EDF                            19.3% ✓ Green
+EFW                            20.7% ✓ Green
+ESS                            45.0% ✓ Green
+Facepieces                     17.6% ✓ Green
+KL Mini Cones                 155.7% ✓ Green
+MBG                            21.7% ✓ Green
+MG Sticks                      62.8% ✓ Green
+Other                           8.5% ~ Yellow
+PG                             19.0% ✓ Green
+SP1                            -1.4% ✗ Red
+Talenti                         0.0% ✗ Red
+YS PTS                         24.5% ✓ Green
+Yasso Club                     13.4% ✓ Green
+Yasso Poppables                14.8% ✓ Green
+Yasso Sandwich                 46.2% ✓ Green
+Yasso Sticks                   12.8% ~ Yellow
+--------------------------------------------------
+Green: 16  Yellow: 4  Red: 2

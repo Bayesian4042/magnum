@@ -1,0 +1,123 @@
+# Manual adjustments that are currently hard-coded into Excel but should be
+# config-driven so they can be updated without touching pipeline code.
+
+# These DUs represent demand that is not in the main MRF file and must be
+# added manually each cycle.
+manual_demand_dus:
+  - du: 84141102
+    description: "B&J Export Pts"
+    category: "export"
+    monthly_cases: 90000   # flat monthly assumption
+    notes: "B&J pint exports - flat assumption unless updated"
+
+  - du: 62735647
+    description: "B&J Export Bulk"
+    category: "export"
+    monthly_cases: 7000
+    notes: "B&J bulk exports"
+
+  - du: 84141103
+    description: "BJ Pints Dependent Demand"
+    category: "dependent_demand"
+    monthly_cases: null    # varies monthly - loaded from MRF3 Demand sheet
+    notes: "Dependent demand for BJ pints mixed pallets - pulled from MRF3 sheet"
+
+  - du: 69798156
+    description: "828ml SMOG"
+    category: "smog"
+    monthly_cases: null    # varies - only certain months
+    notes: "Excess inventory intended for sale; only populated when SMOG exists"
+
+# Innovation items not yet in SAP/RR - add here when a new item is being launched
+# and data is not available in source systems yet.
+innovation_items: []
+# Example:
+# - du: 99999999
+#   description: "New Innovation Item"
+#   site: "1352"
+#   category: "innovation"
+#   monthly_cases:
+#     "2026-06": 50000
+#     "2026-07": 75000
+
+# Manual supply adjustments for items not fully in SAP/RR.
+# Covers: rough cut capacity overrides, additional CM sourcing, offline plans.
+# Each entry produces rows with source_type = "Manual".
+manual_supply_adjustments: []
+# Example:
+# - du: 88888888
+#   description: "Offline CM sourcing - Turkey"
+#   site: "Turkey"
+#   category: "rough_cut_override"
+#   monthly_cases:
+#     "2026-04": 100000
+#     "2026-05": 120000
+
+# Attainment factors by technology (from 'Attain %' sheet in PTG master)
+# These are applied to raw Rapid Response supply figures.
+# Update each planning cycle if assumptions change.
+attainment_factors:
+  "1 Gal": 0.96
+  "2.4 Gal": 0.85
+  "3 Gal": 0.96
+  "48oz": 0.94
+  "56oz": 0.96
+  "64oz": 0.96
+  "B&J Cups": 0.96
+  "B&J Dog Treat": 0.96
+  "B&J Dog Treat - Repack": 0.96
+  "BJ Bars": 0.96
+  "BJ PTS": 0.95
+  "BR Cups": 0.96
+  "BR Minicups": 0.96
+  "Bulk Exports": 0.96
+  "CS PTS": 0.96
+  "Dough Bites": 0.96
+  "EDF": 0.96
+  "EFW": 0.96
+  "ESS": 0.96
+  "Facepieces": 0.96
+  "KL Mini Cones": 0.96
+  "MBG": 0.96
+  "MG Sticks": 0.96
+  "Other": 0.96
+  "PG": 0.96
+  "SP1": 0.96
+  "Talenti": 0.96
+  "Yasso Club": 0.96
+  "Yasso Poppables": 0.96
+  "Yasso Sandwich": 0.96
+  "Yasso Sticks": 0.96
+  "YS PTS": 0.96
+  "default": 0.96   # fallback for any tech not explicitly listed
+
+# MATDI targets (Days of Inventory) at key checkpoint months
+# Used for the Vs Target and Season Readiness outputs
+matdi_targets:
+  "Apr": 23.68
+  "Aug": 17.034
+  "Dec": 18.9
+
+# DOH (Days on Hand) target — end of season target communicated by client.
+# DOH = Inv / (trailing_12m_demand / 365)
+# The trailing 12-month window requires historical demand from SAP.
+doh_target: 45
+
+# Inventory case targets at key season checkpoints (from TGT row in client sheet).
+# These are the inventory levels leadership wants at each checkpoint.
+inventory_case_targets:
+  "Apr": 4000000
+  "Aug": 3000000
+  "Dec": 2900000
+
+# Bandwidth thresholds for Season Readiness traffic light
+# Green: bandwidth >= green_threshold
+# Yellow: yellow_threshold <= bandwidth < green_threshold
+# Red: bandwidth < yellow_threshold
+bandwidth_thresholds:
+  "48oz":         { green: 0.10, yellow: 0.05 }
+  "BJ PTS":       { green: 0.10, yellow: 0.05 }
+  "Talenti":      { green: 0.15, yellow: 0.08 }
+  "MG Sticks":    { green: 0.20, yellow: 0.10 }
+  "Yasso Sticks": { green: 0.15, yellow: 0.08 }
+  "default":      { green: 0.10, yellow: 0.05 }

@@ -1,0 +1,380 @@
+MAGNUM S&OP TRANSFORMATION MAP
+================================================================================
+
+This document traces how each input source feeds the master PTG file.
+Primary join key across all files: DU / Material (8-digit integer SKU code).
+
+
+================================================================================
+  1. MASTER CONVERSION TABLE (DU -> Tech, Litons, Per Pallet)
+================================================================================
+Source: 'Converting MRF File to PTG' -> sheet 'Tech Pallet' (599 rows)
+Also:   'PTG for 2026_MRF3_Send To Plants' -> sheet 'Tech Litons' (532 rows)
+Key columns:
+  DU            -> 8-digit SKU identifier (join key)
+  Sub Tech      -> Fine-grained technology bucket (e.g. '48oz', 'BJ PTS')
+  Main Tech     -> Rollup tech bucket (e.g. '48oz', 'BJ PTS', 'MG Sticks')
+  Numerator     -> Volume numerator for litre calculation
+  Denominator   -> Volume denominator for litre calculation
+  Liters per case -> Numerator/Denominator (litres per case)
+  Litons        -> Liters per case / 1000 (metric tons per case)
+  Per Pallet    -> Cases per pallet (for pallet position calculation)
+
+FORMULA: Tonnage (le tons) = Cases * Litons
+FORMULA: Pallets = Cases / Per_Pallet
+
+Sample conversion table rows (first 5):
+         DU                     DU Description Sub Tech Main Tech  Numerator  Denominator  Liters per case    Litons  Per Pallet Segment  Unnamed: 10  Unnamed: 11
+0  62689431            BJ US-IC-Mango-1 2.4GAL  2.4 Gal   2.4 Gal      200.0       1817.0            9.085  0.009085         125     PIC          NaN          NaN
+1  62735647    BJ US-NDO-ChocChpCookDgh-1 2.4g  2.4 Gal   2.4 Gal      200.0       1817.0            9.085  0.009085         125     PIC          NaN          NaN
+2  64799252  BJ US-NDO MochaccinoChip-1 2.4Gal  2.4 Gal   2.4 Gal      200.0       1817.0            9.085  0.009085         125     PIC          NaN          NaN
+3  64799253      BJ US-NDOStrawbSwirl-1 2.4Gal  2.4 Gal   2.4 Gal      250.0       2271.0            9.084  0.009084         125     PIC          NaN          NaN
+4  64799254      BJ US-IC Ultraviolet-1 2.4Gal  2.4 Gal   2.4 Gal      200.0       1817.0            9.085  0.009085         125     PIC          NaN          NaN
+
+Technology buckets found (24 unique):
+Main Tech
+BJ PTS             98
+48oz               69
+Other              59
+2.4 Gal            50
+MG Sticks          50
+Yasso Sticks       41
+Talenti            35
+SP1                34
+TALENTI            27
+MBG                19
+PG                 17
+B&J Cups           15
+Facepieces         14
+KL Mini Cones      12
+ESS                11
+EDF                10
+Yasso Sandwich      8
+BJ Bars             6
+Dough Bites         6
+Yasso Poppables     5
+YS PTS              5
+EFW                 4
+Yasso Club          3
+pG                  1
+
+
+================================================================================
+  2. ACTUAL SUPPLY: SAP TMICC Table -> PTG '2026' sheet
+================================================================================
+Source: 'PTG 2026 Actuals...' -> sheet 'TMICC' (1789 rows)
+  Material   -> DU/SKU code (join key to conversion table)
+  Plant      -> Manufacturing site code (1352=Covington, 2904=Tulare, etc.)
+  Quantity   -> Cases produced/shipped on that date
+  Pstng Date -> Posting date (daily granularity from SAP)
+
+Transformation: Aggregate daily cases by Material + Plant + Month,
+then join to conversion table on DU to get:
+  Tonnage = SUM(Quantity) * Litons
+  Pallets = SUM(Quantity) / Per_Pallet
+
+Shape: (1789, 8)
+Sites (Plants) found: [1352, 2904, 3910, 5911, 5914]
+Date range: 2026-02-23 00:00:00 to 2026-03-24 00:00:00
+Unique materials: 160
+Sample:
+   Material  Plant  Quantity Pstng Date                            Description Ver. CA is for US  Purch.Doc.
+0  64315721   1352        22 2026-02-23  BR CS Chocolate Peanut Butter 6 1.5QT   S4          NaN         NaN
+1  64315721   1352      3344 2026-02-24  BR CS Chocolate Peanut Butter 6 1.5QT   S4          NaN         NaN
+2  64315721   1352      7920 2026-02-25  BR CS Chocolate Peanut Butter 6 1.5QT   S4          NaN         NaN
+
+
+================================================================================
+  2b. CONTRACT MANUFACTURING (CM/Import) SUPPLY
+================================================================================
+Source: 'PTG 2026 Actuals...' -> sheet 'CM Info' (319 rows)
+  Material               -> DU/SKU code
+  Plant                  -> Receiving site code
+  Goods Receipt Quantity -> Cases received
+  Goods Receipt Date     -> Date of receipt
+  Vendor / GS Name       -> Contract manufacturer name
+
+Source: 'PTG 2026 Actuals...' -> sheet 'Sheet5' (206 rows)
+  Same structure — additional imports (GDI, Rhino, Incom, etc.)
+
+CM Vendors: ['Caspers Ice Cream   LLC', 'DFA  Belvidere  IL', 'GELATO D ITALIA S P A', 'Hudsonville Creamery and Ice Cream', 'Ice Cream Specialties  Inc', 'Incom d o o', 'Oregon Ice Cream  LLC', 'PACKAGING CORPORATION OF AMERICA', 'RHINO FOODS INC USE V#2018125 FOR', 'Schwan s Sales Co   Inc    Foodserv', 'UNILEVER DE MEXICO S R L DE C V', 'UNITED STATES COLD STORAGE INC.']
+Sample:
+   Material Plant  Goods Receipt Quantity Goods Receipt Date                              Description  Plnt    Vendor              Vendor Name Goods Supplier                  GS Name
+0  64976846  1717                   28282         2026-02-25  Yasso Strawberry Chocolate Crunch 8-4pk  1717  51655114  Caspers Ice Cream   LLC       51655114  Caspers Ice Cream   LLC
+1  64976851  1717                   19571         2026-03-02     Yasso Caramel Chocolate Crunch 8-4pk  1717  51655114  Caspers Ice Cream   LLC       51655114  Caspers Ice Cream   LLC
+2  64976847  1717                   50055         2026-03-13     Yasso Vanilla Chocolate Crunch 8-4pk  1717  51655114  Caspers Ice Cream   LLC       51655114  Caspers Ice Cream   LLC
+
+
+================================================================================
+  3. FORWARD-LOOKING SUPPLY: Rapid Response -> PTG
+================================================================================
+Source: 'Converting 3pm-Import...' -> sheet 'Combined' (734 rows)
+  Part Name      -> DU/SKU code (join key)
+  Site           -> Plant code
+  Site Name      -> Plant name
+  PPG            -> Product Group
+  Big/Small Cat  -> Category rollup
+  Site Type      -> Manufacturing / CM / Import
+  Line           -> Production line
+  Figure Name    -> Supply figure type
+  [date cols]    -> Weekly supply quantities (cases) by week-ending date
+
+Source: 'Converting 3pm-Import...' -> sheet 'Cleaned Up' (1876 rows)
+  DU / Site / Qty / Date / Description / Line
+  This is the cleaned, tidy-format version of the weekly supply plan.
+
+Transformation: Aggregate weekly cases to monthly by DU + Site + Month,
+then join conversion table for tonnage & pallet calculations.
+
+RR Combined shape: (734, 61)
+Sites: [1352, 'Incom', 'GDI', 'Turkey', 'Veszprem', 'Gloucester', 'Rhino', 1712, 1713, 1715, 1716, 1717, 2904, 3217, 3910]
+Cleaned Up shape: (1876, 6)
+Date range: 2026-03-16 00:00:00 to 2026-12-21 00:00:00
+Sample Cleaned Up:
+         DU  Site  Qty       Date                             Description                  Line
+0  69629468  2904   90 2026-03-23                PS Fudgesicle NSA 6-18PK              04GRAM-2
+1  64778041  3217  228 2026-05-04  KL Vanilla CHOCO Super Big Cone 1-24BK             NoRouting
+2  64976851  1717  308 2026-03-16    Yasso Caramel Chocolate Crunch 8-4pk  3PM Dummy Constraint
+
+
+================================================================================
+  4. DEMAND: MRF File -> PTG 'MRF3 Demand' Sheet
+================================================================================
+Source: 'Converting MRF File...' -> sheet 'MRF2' (881 rows)
+  Row 0 is the actual header: Segment, Tech, DU, UCC, Description,
+  then monthly case columns (2024 actuals, 2025-2026 forecast)
+
+Target: 'PTG for 2026_MRF3' -> sheet 'MRF3 Demand' (392 rows)
+  DU, Sub Tech, Main Tech, Description, monthly case columns (2026 months)
+  Per Pallet, then historical pallet columns (JAN-2023 ... DEC-2023)
+
+Transformation:
+  Cases (monthly) -> join conversion table on DU ->
+  Demand Litons = Cases * Litons
+  Demand Pallets = Cases / Per_Pallet
+
+Manual add-ons captured in MRF3 Demand (rows with special DUs):
+  DU 84141102 = B&J Export Pts (export demand)
+  DU 62735647 = B&J Export Bulk (export demand)
+  DU 84141103 = BJ Pints Depend Demand (dependent demand)
+  DU 69798156 = 828ml SMOG (excess inventory for sale)
+
+MRF3 Demand shape: (392, 32)
+Sample:
+   Unnamed: 0        DU   Sub Tech  Main Tech                            Description      DU.1  2026-01-01 00:00:00  2026-02-01 00:00:00  2026-03-01 00:00:00  2024-04-01 00:00:00  2024-05-01 00:00:00  2024-06-01 00:00:00  2024-07-01 00:00:00  2024-08-01 00:00:00  2024-09-01 00:00:00  2024-10-01 00:00:00  2024-11-01 00:00:00  2024-12-01 00:00:00  Grand Total  Per Pallet  JAN-2023  FEB-2023   MAR-2023   APR-2023    MAY-2023    JUN-2023  JUL-2023   AUG-2023    SEP-2023   OCT-2023   NOV-2023   DEC-2023
+0         NaN  84141102     BJ PTS     BJ PTS                         B&J Export Pts  84141102              90000.0              90000.0              90000.0              90000.0              90000.0              90000.0              90000.0              90000.0              90000.0              90000.0              90000.0              90000.0    1080000.0         240     375.0     375.0  375.00000  375.00000  375.000000  375.000000  375.0000  375.00000  375.000000  375.00000  375.00000  375.00000
+1         NaN  62735647    2.4 Gal    2.4 Gal                        B&J Export Bulk  62735647               7000.0               7000.0               7000.0               7000.0               7000.0               7000.0               7000.0               7000.0               7000.0               7000.0               7000.0               7000.0      84000.0         125      56.0      56.0   56.00000   56.00000   56.000000   56.000000   56.0000   56.00000   56.000000   56.00000   56.00000   56.00000
+2         NaN  84141103     BJ PTS     BJ PTS  BJ Pints Depend Demand - Mixed Pallet  84141103               6336.0              31824.0              35311.5              31888.5              39823.5              49278.0              44319.0              39337.5              40167.0              32263.5              32647.5              32329.5     415525.5         240      26.4     132.6  147.13125  132.86875  165.931250  205.325000  184.6625  163.90625  167.362500  134.43125  136.03125  134.70625
+3         NaN  69798156     Quarts      Other                             828ml SMOG  69798156                  NaN                  NaN                  NaN                  NaN               3000.0                  NaN                  NaN                  NaN              14000.0                  NaN                  NaN                  NaN      17000.0         182       0.0       0.0    0.00000    0.00000   16.483516    0.000000    0.0000    0.00000   76.923077    0.00000    0.00000    0.00000
+4         NaN  64360314  MG Sticks  MG Sticks                         Yasso OOH 1-24  64360314                  NaN                  NaN                  NaN                  NaN                  NaN              30000.0                  NaN                  NaN                  NaN                  NaN                  NaN                  NaN      30000.0         195       0.0       0.0    0.00000    0.00000    0.000000  153.846154    0.0000    0.00000    0.000000    0.00000    0.00000    0.00000
+
+
+================================================================================
+  5. ACTUAL INVENTORY: SAP MBEWH -> PTG 'Inv By Tech Post Attain'
+================================================================================
+Source: 'Feb 2026 Inventory...' -> sheet 'MBEWH-Actuals' (2275 rows)
+  Material    -> DU/SKU code (join key)
+  ValA        -> Plant/site code
+  Year/Pe     -> Year and Period (month)
+  TotalStock  -> Inventory cases on hand
+  Total Val.  -> Inventory value
+  Tech        -> Technology bucket (pre-labeled in SAP extract)
+  Per pallet  -> Cases per pallet
+  Pallets     -> TotalStock / Per pallet (pre-calculated)
+
+Transformation:
+  Group by Tech + Period -> sum TotalStock -> starting inventory for projections
+  Inventory Litons = TotalStock * Litons_per_case
+
+MATDI Formula:
+  MAT (Moving Annual Total) = sum of last 12 months demand
+  DI (Days of Inventory)    = (Inventory_Cases / MAT_Cases) * 365
+  MATDI                     = DI (rolling, updated monthly)
+
+Inventory shape: (2275, 19)
+Tech buckets: ['2.4 Gal', 'BJ PTS', 'Other', 'MG Sticks', 'EFW', 'PG', '48oz', 'Yasso Sticks', 'MBG', 'Yasso Sandwich', 'Yasso Poppables', 'Yasso Club', 'ESS', 'Facepieces', 'B&J Cups', 'Talenti', 'KL Mini Cones', 'SP1', 'Repack Items', 'pG', 'Giant Vanilla Sandwich', 'GH Cones', 'TALENTI', 'YS PTS', 'GH "Candy"', 'BJ Bars', 'BR Minicups', 'Yasso Cups', 'Canada', 'BR Pts New', 'Dough Bites', 'EDF', 'Quarts']
+Sites (ValA): [1352, 1406, 1419, 1439, 1471, 1712, 1713, 1714, 1715, 1716, 1717, 2300, 2400, 2904, 3985, 3989, 5911, 5914, 6706, 6757, 6764, 6765]
+Total inventory cases: 22,481,183
+Sample:
+   Material  ValA  Val. Type  Year  Pe Prc ValCl  TotalStock  Total Val.  MvAvgPrice  Std price   per     Value  Tot.SP val     Tech                  Description Brand  Per pallet  Pallets
+0     17090  1419        NaN  2026   2   V  ZA03       230.0    24643.01   107143.52  103514.08  1000  24643.01           0  2.4 Gal  BJ Choc Chk Ckie Btr 6 6 LB    BJ          50        5
+1     17090  1439        NaN  2026   2   V  ZA03        63.0     7049.93   111903.65  103514.08  1000   7049.93           0  2.4 Gal  BJ Choc Chk Ckie Btr 6 6 LB    BJ          50        2
+2     17090  2300        NaN  2026   2   V  ZA03       233.0    25250.23   108370.09  104374.89  1000  25250.23           0  2.4 Gal  BJ Choc Chk Ckie Btr 6 6 LB    BJ          50        5
+
+
+================================================================================
+  6. MASTER PTG OUTPUT: 'PTG for 2026_MRF3_Send To Plants.xlsx'
+================================================================================
+Sheet '2026' (7261 rows) - GRAIN: Material + Plant + Week
+  Material Number          -> DU/SKU code
+  Plant                    -> Site code
+  Delivered quantity       -> Raw production cases (from RR/SAP)
+  Basic start date         -> Week start date
+  Material description     -> SKU name
+  Production Version       -> Line/version code
+  Liton per                -> Litons conversion factor (from Tech Litons tab)
+  Per Pallet               -> Cases per pallet
+  Sub Tech / Main Tech     -> Technology classification
+  Attain                   -> Attainment factor from 'Attain %' tab
+  Case post attain         -> Delivered quantity * Attain
+  Litons post attainment   -> Case post attain * Liton per
+  Pallets Post Attainment  -> Case post attain / Per Pallet
+  Month / Week             -> Time dimension
+
+Sheet 'Cases post Attain' - Monthly rollup by Tech + Plant (pivot)
+Sheet 'Litons Post Attain' - Monthly liton totals by Tech + Plant
+Sheet 'Pallets post Attain' - Monthly pallet totals by Tech + Plant
+Sheet 'Inv By Tech Post Attain' - Supply, Demand, Inventory, DOH by Tech
+Sheet 'Phasing MAT DI' - Monthly MATDI projection (target vs projection)
+Sheet 'BW' - Bandwidth / Season Readiness (target vs LV, green/yellow/red)
+Sheet 'Vs Target' - Inventory vs MATDI target at key months (Apr, Aug, EOY)
+Sheet 'Recap2' - Tonnage recap by site (MRF1, MRF2, MRF3 comparison)
+
+'2026' sheet shape: (7261, 18)
+Sites: [1352, 2904, 5911, 5914, 3910, 'GDI', 'Rhino', 'Incom', 1712, 1713, 1715, 1716, 1717, 3985, 'Tultitlan', 6706, 6757, 6764, 6765, 'Turkey', 'Turkey Hill', 'Veszprem']
+Months: ['Jan', 'Feb', 'Mar', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec', 'Apr', 'May']
+Attain % range: 0.85 - 1.0
+Sample:
+   Material Number Plant  Delivered quantity     Basic start date            Material description Production Version  Liton per  Per Pallet Sub Tech Main Tech  Attain  Case post attain  Litons post attainment  Pallets Post Attainment Month  Week  Notes 1  Notes 2
+0         68817796  1352                46.0  2026-01-03 00:00:00        BR XCRMY Vanilla 6 1.5QT                 S2   0.008514         176     48oz  135248oz     1.0              46.0                0.391644                 0.261364   Jan     1      NaN      NaN
+1         68851107  2904              1056.0  2026-01-03 00:00:00          BR NAT Vanilla 6-1.5QT                SS1   0.008520         176     48oz  290448oz     1.0            1056.0                8.997120                 6.000000   Jan     1      NaN      NaN
+2         68689251  1352              1276.0  2026-01-03 00:00:00  KL Original Vanilla Bar 12-6PK                 K1   0.009576         132      EDF   1352EDF     1.0            1276.0               12.218976                 9.666667   Jan     1      NaN      NaN
+3         68851104  2904              1408.0  2026-01-03 00:00:00            BR Chocolate 6-1.5QT                SS2   0.008520         176     48oz  290448oz     1.0            1408.0               11.996160                 8.000000   Jan     1      NaN      NaN
+4         68921994  1352              1452.0  2026-01-03 00:00:00    KL Dark Chocolate Bar 12-6PK                 K2   0.009576         132      EDF   1352EDF     1.0            1452.0               13.904352                11.000000   Jan     1      NaN      NaN
+
+
+================================================================================
+  7. ATTAINMENT % TABLE
+================================================================================
+Source: 'PTG for 2026_MRF3_Send To Plants' -> sheet 'Attain %' (73 rows)
+  Tech      -> Technology bucket
+  Attain %  -> Fraction applied to raw supply to get 'real' output
+              (accounts for yield loss, downtime, etc.)
+
+FORMULA: Case post attain = Delivered_quantity * Attain_%
+
+Sample attainment table:
+                      Tech  Attain %
+0                    1 Gal      0.96
+1                  2.4 Gal      0.85
+2                    3 Gal      0.96
+3                     48oz      0.94
+4                     56oz      0.96
+5                     64oz      0.96
+6                 B&J Cups      0.96
+7            B&J Dog Treat      0.96
+8   B&J Dog Treat - Repack      0.96
+9                  BJ Bars      0.96
+10                  BJ PTS      0.95
+11                 BR Cups      0.96
+12             BR Minicups      0.96
+13            Bulk Exports      0.96
+14                  CS PTS      0.96
+
+
+================================================================================
+  8. COMPLETE DATA FLOW SUMMARY
+================================================================================
+
+INPUT SOURCES                          TRANSFORMATION                OUTPUT
+─────────────────────────────────────────────────────────────────────────────
+SAP TMICC Table                        + Attain % by Tech           →  Cases post Attain
+  (Material, Plant, Qty, Date)         × Litons per case            →  Litons post Attain
+                                       ÷ Per Pallet                 →  Pallets post Attain
+
+SAP CM/Import Goods Receipts           Same conversions above       →  (same outputs)
+  (Material, Plant, GR Qty, Date)
+
+Rapid Response Weekly Plan             Aggregate weekly→monthly     →  Forward supply
+  (DU, Site, Qty, Week Date)           + Attain factor              →  Cases/Litons/Pallets
+
+MRF Demand File                        Aggregate by Tech+Month      →  Demand Cases
+  (DU, UCC, monthly cases)             × Litons per case            →  Demand Litons
+                                       ÷ Per Pallet                 →  Demand Pallets
+
+SAP MBEWH Inventory                    Group by Tech+Month          →  Starting Inventory
+  (Material, Plant, TotalStock)        × Litons per case            →  Inventory Litons
+                                                                     →  Inventory Pallets
+
+Manual Adjustments (in MRF3 Demand):
+  - B&J Export Pts/Bulk               Included in demand            →  Reduces net supply
+  - Dependent demand (BJ pints)        Added to demand              →  Reduces net supply
+  - SMOG (excess inventory)            Treated as demand            →  Inventory draw-down
+  - Innovation items                   Manual case entries          →  Demand uplift
+
+CALCULATIONS:
+  MATDI = (Inventory_Cases / Rolling_12M_Demand) × 365
+  DOH   = (Inventory_Cases / Monthly_Demand) × 30   [monthly view]
+  Bandwidth = (Peak_Inventory - Min_Service_Inventory) / Average_Demand
+
+FINAL OUTPUTS (sheets in PTG Master):
+  → Tonnage by Site (Recap2)                   → Send to manufacturing sites
+  → Pallets by Tech + Site (Pallets post Attain) → Warehousing team
+  → MATDI Projection (Phasing MAT DI)           → Senior leadership / finance
+  → Season Readiness / Bandwidth (BW sheet)     → S&OP stakeholders
+  → RCCP Overview (Cases/Litons/Pallets by Tech) → Capacity planning
+
+JOIN KEY MAPPING ACROSS FILES:
+  File                         Column Name    Notes
+  ─────────────────────────────────────────────────
+  TMICC (SAP actuals)          Material       8-digit int
+  CM Info (contract mfg)       Material       8-digit int
+  RR Combined/Cleaned Up       Part Name/DU   8-digit int
+  MBEWH Actuals (inventory)    Material       8-digit int
+  MRF Demand (demand file)     DU             8-digit int
+  Tech Pallet (conv table)     DU             8-digit int
+  PTG '2026' sheet             Material Number 8-digit int
+  PTG 'MRF3 Demand' sheet      DU             8-digit int
+
+SITE CODE MAPPING (ValA / Plant):
+  1352 = Covington
+  2904 = Tulare
+  5914 = St. Albans (B&J)
+  1419 = Sikeston / GDI
+  1717 = Caspers (CM/Yasso)
+  Rhino/Hollipac, Corlu = External CM/Import sites
+
+
+================================================================================
+  9. AUTOMATION OPPORTUNITIES
+================================================================================
+
+CURRENT MANUAL STEP                    AUTOMATION APPROACH
+─────────────────────────────────────────────────────────────────────────────
+1. Pull SAP TMICC table monthly        → SAP RFC/BAPI or OData API connector
+   (copy-paste into Excel)               pipeline.extract.sap_tmicc()
+
+2. Pull SAP MBEWH inventory            → Same SAP connector
+   (copy-paste into Excel)               pipeline.extract.sap_mbewh()
+
+3. Export Rapid Response weekly plan   → RR API or scheduled file drop
+   (manual export, paste into sheets)    pipeline.extract.rapid_response()
+
+4. Receive MRF demand file             → File watcher on shared drive / email
+   (monthly Excel from demand team)      pipeline.extract.mrf_demand()
+
+5. Apply UCCC→DU conversion            → One-time load of Tech Pallet table
+   (manual VLOOKUP / manual mapping)     pipeline.transform.apply_conversion_table()
+
+6. Apply Attainment % factors          → Config-driven YAML table
+   (manual lookup per tech)              config/attainment_factors.yaml
+
+7. Calculate Cases/Litons/Pallets      → Python: cases * litons, cases / per_pallet
+   (Excel formulas, error-prone)         pipeline.calculate.convert_units()
+
+8. Compute MATDI                       → Rolling 12-month window calculation
+   (Excel formulas across rows)          pipeline.calculate.compute_matdi()
+
+9. Build pivot summaries               → pandas groupby + pivot_table
+   (manual pivot tables in Excel)        pipeline.output.generate_summary_tables()
+
+10. Update Bandwidth/Season Readiness  → Threshold-based traffic light logic
+    (manual green/yellow/red fill)       pipeline.output.season_readiness()
+
+BIGGEST TIME SAVINGS:
+  Steps 1-4 (data extraction) currently take ~1-2 days per cycle.
+  Automation reduces this to minutes with scheduled pulls.
+  Steps 5-10 (calculations + pivots) take ~1 day.
+  Automation reduces to seconds once data is loaded.
+  Net effect: Monthly 2-3 day process → <1 hour automated run.
+  Enables: Weekly cadence instead of monthly.

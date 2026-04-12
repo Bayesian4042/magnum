@@ -1,0 +1,47 @@
+# Conversion table configuration
+# The Tech Pallet sheet in the Demand Conversion file is the master reference.
+# This file documents the source and any static overrides.
+
+conversion_table:
+  source_file: "Converting MRF File to PTG 2025-2026 MRF3- Demand Conversion.xlsx"
+  sheet: "Tech Pallet"
+  du_column: "DU"
+  sub_tech_column: "Sub Tech"
+  main_tech_column: "Main Tech"
+  litons_column: "Litons"
+  per_pallet_column: "Per Pallet"
+  liters_per_case_column: "Liters per case"
+
+# Site code -> human-readable name mapping
+site_names:
+  1352: "Covington"
+  2904: "Tulare"
+  5914: "St. Albans (B&J)"
+  5911: "St. Albans (B&J) Line 2"
+  1419: "Sikeston"
+  1717: "Caspers (CM)"
+  1712: "CM Site 1712"
+  1713: "CM Site 1713"
+  1715: "CM Site 1715"
+  1716: "CM Site 1716"
+  3910: "CM Site 3910"
+  3985: "CM Site 3985"
+  6706: "Schwan's"
+  6757: "CM Site 6757"
+  6764: "CM Site 6764"
+  6765: "CM Site 6765"
+  GDI: "Gelato d'Italia (Import)"
+  Rhino: "Rhino/Hollipac (CM)"
+  Incom: "Incom (CM)"
+  Turkey: "Turkey (Import)"
+  Tultitlan: "Tultitlan (Mexico)"
+  Veszprem: "Veszprem (Europe)"
+
+# Technology rollup normalization
+# Some files use slightly different tech names; normalize to canonical form
+tech_normalization:
+  "TALENTI": "Talenti"
+  "pG": "PG"
+  "135248oz": "48oz"
+  "290448oz": "48oz"
+  "1352EDF": "EDF"
