@@ -341,6 +341,7 @@ def load_demand() -> pd.DataFrame:
 # Inv By Tech Post Attain — extract seed inventory values (col2 = prior-month actual)
 # ---------------------------------------------------------------------------
 
+
 def load_inv_seeds() -> dict:
     """
     Extract the starting inventory seeds from 'Inv By Tech Post Attain' sheet.
@@ -399,8 +400,18 @@ def load_actual_inv_by_tech() -> dict:
     )
 
     months_labels = [
-        "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06",
-        "2026-07", "2026-08", "2026-09", "2026-10", "2026-11", "2026-12",
+        "2026-01",
+        "2026-02",
+        "2026-03",
+        "2026-04",
+        "2026-05",
+        "2026-06",
+        "2026-07",
+        "2026-08",
+        "2026-09",
+        "2026-10",
+        "2026-11",
+        "2026-12",
     ]
 
     result = {}
@@ -459,8 +470,18 @@ def load_client_doh_and_targets() -> dict:
         engine="openpyxl",
     )
     months_labels = [
-        "2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06",
-        "2026-07", "2026-08", "2026-09", "2026-10", "2026-11", "2026-12",
+        "2026-01",
+        "2026-02",
+        "2026-03",
+        "2026-04",
+        "2026-05",
+        "2026-06",
+        "2026-07",
+        "2026-08",
+        "2026-09",
+        "2026-10",
+        "2026-11",
+        "2026-12",
     ]
 
     result = {}
@@ -475,7 +496,11 @@ def load_client_doh_and_targets() -> dict:
             current_tech = c1
             result[current_tech] = {
                 "doh": {},
-                "doh_target": pd.to_numeric(row.iloc[17], errors="coerce") if len(row) > 17 else None,
+                "doh_target": (
+                    pd.to_numeric(row.iloc[17], errors="coerce")
+                    if len(row) > 17
+                    else None
+                ),
                 "inv_targets": {},
                 "bandwidth": None,
             }
@@ -506,6 +531,113 @@ def load_client_doh_and_targets() -> dict:
     return result
 
 
+# Mapping from client sheet tech names to our normalized pipeline names
+_CLIENT_TECH_NORM = {
+    "BJ Pts": "BJ PTS",
+    "TALENTI": "Talenti",
+    "MG Stick": "MG Sticks",
+    "Total IC": None,  # skip the totals row
+}
+
+
+def load_client_inv_by_tech() -> pd.DataFrame:
+    """
+    Extract the full per-tech monthly data from "Inv By Tech Post Attain":
+    Production, Demand, Inventory, and DOH for every tech and month.
+
+    Used for validation: comparing our computed numbers against the client's
+    manually assembled baseline.
+
+    Returns DataFrame with columns:
+      main_tech, month, client_production, client_demand, client_inventory, client_doh
+    """
+    raw = pd.read_excel(
+        FILES["ptg_master"],
+        sheet_name="Inv By Tech Post Attain",
+        header=None,
+        engine="openpyxl",
+    )
+    months_labels = [
+        "2026-01",
+        "2026-02",
+        "2026-03",
+        "2026-04",
+        "2026-05",
+        "2026-06",
+        "2026-07",
+        "2026-08",
+        "2026-09",
+        "2026-10",
+        "2026-11",
+        "2026-12",
+    ]
+
+    blocks: dict[str, dict] = {}
+    current_tech = None
+
+    for _, row in raw.iterrows():
+        b = str(row.iloc[1]).strip()
+        c = str(row.iloc[2]).strip()
+
+        if c == "Production" and b not in ("nan", "NaN", ""):
+            norm = _CLIENT_TECH_NORM.get(b, b)
+            if norm is None:
+                current_tech = None
+                continue
+            current_tech = norm
+            blocks[current_tech] = {
+                "production": {},
+                "demand": {},
+                "inventory": {},
+                "doh": {},
+            }
+            for j, m in enumerate(months_labels):
+                v = pd.to_numeric(row.iloc[3 + j], errors="coerce")
+                if pd.notna(v):
+                    blocks[current_tech]["production"][m] = v
+
+        if current_tech is None:
+            continue
+
+        if c == "Demand":
+            for j, m in enumerate(months_labels):
+                v = pd.to_numeric(row.iloc[3 + j], errors="coerce")
+                if pd.notna(v):
+                    blocks[current_tech]["demand"][m] = v
+
+        if b == "Inv":
+            for j, m in enumerate(months_labels):
+                v = pd.to_numeric(row.iloc[3 + j], errors="coerce")
+                if pd.notna(v):
+                    blocks[current_tech]["inventory"][m] = v
+
+        if c == "DOH":
+            for j, m in enumerate(months_labels):
+                v = pd.to_numeric(row.iloc[3 + j], errors="coerce")
+                if pd.notna(v):
+                    blocks[current_tech]["doh"][m] = v
+
+    rows = []
+    for tech, data in blocks.items():
+        for m in months_labels:
+            rows.append(
+                {
+                    "main_tech": tech,
+                    "month": m,
+                    "client_production": data["production"].get(m, 0),
+                    "client_demand": data["demand"].get(m, 0),
+                    "client_inventory": data["inventory"].get(m, 0),
+                    "client_doh": data["doh"].get(m, 0),
+                }
+            )
+
+    df = pd.DataFrame(rows)
+    print(
+        f"[extract] Client inv-by-tech loaded: {len(df)} rows, {df['main_tech'].nunique()} technologies"
+    )
+    return df
+
+
 # ---------------------------------------------------------------------------
 # Manual Supply Adjustments (from config)
 # ---------------------------------------------------------------------------
@@ -534,18 +666,22 @@ def load_manual_supply_adjustments() -> pd.DataFrame:
             monthly = item.get("monthly_cases", {}) or {}
             for month, cases in monthly.items():
                 if cases and cases > 0:
-                    rows.append({
-                        "du": int(du),
-                        "site": site,
-                        "month": str(month),
-                        "cases": float(cases),
-                        "description": desc,
-                        "source_type": "Manual",
-                    })
+                    rows.append(
+                        {
+                            "du": int(du),
+                            "site": site,
+                            "month": str(month),
+                            "cases": float(cases),
+                            "description": desc,
+                            "source_type": "Manual",
+                        }
+                    )
 
     df = pd.DataFrame(rows)
     if len(df) == 0:
-        df = pd.DataFrame(columns=["du", "site", "month", "cases", "description", "source_type"])
+        df = pd.DataFrame(
+            columns=["du", "site", "month", "cases", "description", "source_type"]
+        )
 
     print(f"[extract] Manual supply adjustments loaded: {len(df)} rows")
     return df

@@ -4,10 +4,11 @@ Magnum S&OP Dashboard
 Streamlit app. Run with:
   uv run streamlit run dashboard.py
 
-Three tabs:
-  1. Season Readiness  — traffic-light overview by technology
-  2. RCCP Overview     — supply / demand / inventory / DOH per tech
-  3. Sites & Pallets   — tonnage by plant + total pallet position
+Four tabs:
+  1. Season Readiness    — traffic-light overview by technology
+  2. RCCP Overview       — supply / demand / inventory / DOH per tech
+  3. Sites & Pallets     — tonnage by plant + total pallet position
+  4. Computed vs Client  — side-by-side validation against client's Excel
 
 Sidebar controls:
   - DOH Target (days)         — overrides the 45-day default
@@ -83,6 +84,7 @@ def load_raw_data():
         "inv_seeds": extract.load_inv_seeds(),
         "actual_inv": extract.load_actual_inv_by_tech(),
         "client_doh": extract.load_client_doh_and_targets(),
+        "client_inv_by_tech": extract.load_client_inv_by_tech(),
     }
 
 
@@ -303,12 +305,13 @@ st.title("Magnum S&OP Planning Dashboard")
 st.caption("MRF3 2026 — Supply, demand and inventory planning")
 
 # =========================================================================
-# TAB LAYOUT — 3 tabs
+# TAB LAYOUT — 4 tabs
 # =========================================================================
-tab1, tab2, tab3 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "Season Readiness",
     "RCCP Overview",
     "Sites & Pallets",
+    "Computed vs Client",
 ])
 
 
@@ -493,3 +496,130 @@ with tab3:
     peak_pallets = pallet_total["supply_pallets"].max()
     peak_month = pallet_total.loc[pallet_total["supply_pallets"].idxmax(), "month"]
     st.metric("Peak Pallets", f"{peak_pallets:,.0f}", delta=f"in {peak_month}")
+
+
+# =========================================================================
+# TAB 4: Computed vs Client (validation)
+# =========================================================================
+with tab4:
+    st.subheader("Computed vs Client Validation")
+    st.caption(
+        "Side-by-side comparison of our automated pipeline output against "
+        "the client's manually assembled 'Inv By Tech Post Attain' sheet."
+    )
+
+    client_base = raw["client_inv_by_tech"]
+    client_techs = sorted(client_base["main_tech"].unique())
+
+    val_tech = st.selectbox(
+        "Technology", options=client_techs,
+        index=client_techs.index("48oz") if "48oz" in client_techs else 0,
+        key="val_tech",
+    )
+
+    inv_col_v = "projected_inv_cases" if "projected_inv_cases" in master.columns else "inv_cases"
+    doh_col_v = "doh" if "doh" in master.columns else None
+
+    our = master[master["main_tech"] == val_tech][["month", "supply_cases", "demand_cases", inv_col_v]].copy()
+    our = our.rename(columns={"supply_cases": "our_production", "demand_cases": "our_demand", inv_col_v: "our_inventory"})
+    if doh_col_v and doh_col_v in master.columns:
+        our["our_doh"] = master.loc[master["main_tech"] == val_tech, doh_col_v].values
+
+    cli = client_base[client_base["main_tech"] == val_tech][
+        ["month", "client_production", "client_demand", "client_inventory", "client_doh"]
+    ].copy()
+
+    cmp = our.merge(cli, on="month", how="outer").sort_values("month").reset_index(drop=True)
+
+    # Compute diffs and pct diffs for accuracy scoring
+    for metric in ["production", "demand", "inventory"]:
+        ours_col = f"our_{metric}"
+        client_col = f"client_{metric}"
+        cmp[f"{metric}_diff"] = cmp[ours_col] - cmp[client_col]
+        cmp[f"{metric}_pct"] = (
+            (cmp[f"{metric}_diff"].abs() / cmp[client_col].replace(0, float("nan"))) * 100
+        ).fillna(0)
+
+    if "our_doh" in cmp.columns:
+        cmp["doh_diff"] = cmp["our_doh"] - cmp["client_doh"]
+        cmp["doh_pct"] = (
+            (cmp["doh_diff"].abs() / cmp["client_doh"].replace(0, float("nan"))) * 100
+        ).fillna(0)
+
+    # --- Accuracy summary metrics ---
+    THRESHOLD_PCT = 1.0
+
+    def accuracy_count(pct_col: str) -> tuple[int, int]:
+        within = (cmp[pct_col] <= THRESHOLD_PCT).sum()
+        total = len(cmp)
+        return int(within), int(total)
+
+    c1, c2, c3, c4 = st.columns(4)
+    prod_ok, prod_n = accuracy_count("production_pct")
+    dem_ok, dem_n = accuracy_count("demand_pct")
+    inv_ok, inv_n = accuracy_count("inventory_pct")
+    c1.metric("Production", f"{prod_ok}/{prod_n} months within 1%")
+    c2.metric("Demand", f"{dem_ok}/{dem_n} months within 1%")
+    c3.metric("Inventory", f"{inv_ok}/{inv_n} months within 1%")
+    if "doh_pct" in cmp.columns:
+        doh_ok, doh_n = accuracy_count("doh_pct")
+        c4.metric("DOH", f"{doh_ok}/{doh_n} months within 1%")
+
+    # --- Bandwidth comparison ---
+    our_bw_row = bandwidth[bandwidth["main_tech"] == val_tech]
+    client_doh_data = raw["client_doh"]
+    our_bw = our_bw_row["bandwidth"].values[0] if len(our_bw_row) else None
+    client_bw = client_doh_data.get(val_tech, {}).get("bandwidth") if client_doh_data else None
+
+    if our_bw is not None and client_bw is not None:
+        bw_diff = abs(our_bw - client_bw)
+        bc1, bc2, bc3 = st.columns(3)
+        bc1.metric("Our Bandwidth", f"{our_bw:.1%}")
+        bc2.metric("Client Bandwidth", f"{client_bw:.1%}")
+        bc3.metric("Diff", f"{bw_diff:.1%}")
+
+    st.divider()
+
+    # --- Side-by-side detail table ---
+    def _fmt_cases(v):
+        return f"{v:,.0f}" if pd.notna(v) else "—"
+
+    def _fmt_diff(v, pct):
+        if pd.isna(v):
+            return "—"
+        sign = "+" if v > 0 else ""
+        flag = " *" if abs(pct) > THRESHOLD_PCT else ""
+        return f"{sign}{v:,.0f} ({pct:.1f}%){flag}"
+
+    def _fmt_doh(v):
+        return f"{v:.1f}" if pd.notna(v) and v != 0 else "—"
+
+    def _fmt_doh_diff(v, pct):
+        if pd.isna(v):
+            return "—"
+        sign = "+" if v > 0 else ""
+        flag = " *" if abs(pct) > THRESHOLD_PCT else ""
+        return f"{sign}{v:.1f} ({pct:.1f}%){flag}"
+
+    display_rows = []
+    for _, r in cmp.iterrows():
+        row_data = {
+            "Month": r["month"],
+            "Our Prod": _fmt_cases(r["our_production"]),
+            "Client Prod": _fmt_cases(r["client_production"]),
+            "Prod Diff": _fmt_diff(r["production_diff"], r["production_pct"]),
+            "Our Demand": _fmt_cases(r["our_demand"]),
+            "Client Demand": _fmt_cases(r["client_demand"]),
+            "Demand Diff": _fmt_diff(r["demand_diff"], r["demand_pct"]),
+            "Our Inv": _fmt_cases(r["our_inventory"]),
+            "Client Inv": _fmt_cases(r["client_inventory"]),
+            "Inv Diff": _fmt_diff(r.get("inventory_diff", float("nan")), r.get("inventory_pct", 0)),
+        }
+        if "our_doh" in cmp.columns:
+            row_data["Our DOH"] = _fmt_doh(r.get("our_doh"))
+            row_data["Client DOH"] = _fmt_doh(r.get("client_doh"))
+            row_data["DOH Diff"] = _fmt_doh_diff(r.get("doh_diff", float("nan")), r.get("doh_pct", 0))
+        display_rows.append(row_data)
+
+    st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+    st.caption("* = difference exceeds 1% threshold")
