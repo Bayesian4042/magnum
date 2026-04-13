@@ -116,18 +116,17 @@ def compute_matdi(
 
     MATDI = (Projected_Inv / Rolling_12M_Demand) * 365
 
-    DOH: The client's DOH uses a trailing 12-month demand that includes 2025
-    historical actuals from SAP (not available in MRF3 Demand alone).
-    When client_doh_data is provided (from extract.load_client_doh_and_targets),
-    we use the client's exact DOH values.  Otherwise we approximate with
-    the 2026-only rolling demand.
+    DOH matches the client's "Inv By Tech Post Attain" sheet formula:
+      DOH[month] = Inventory[month] / (Demand[month+1] + Demand[month+2]) / 60)
+    i.e. forward-looking 2-month demand window, scaled to 60 days.
 
-    When doh_target_override is set, client_doh_data is ignored so that
-    the what-if scenario recomputes DOH from the formula.
+    When client_doh_data is provided AND doh_target_override is None,
+    we use the client's pre-computed DOH values.  When doh_target_override
+    is set, we always recompute from the formula so what-if scenarios work.
 
     Parameters
     ----------
-    master              : master view with projected_inv_cases
+    master              : master view with projected_inv_cases, demand_cases
     client_doh_data     : output of extract.load_client_doh_and_targets()
     doh_target_override : if set, overrides the config DOH target and forces
                           formula-based DOH computation (ignores client DOH).
@@ -136,19 +135,20 @@ def compute_matdi(
     master["month_dt"] = pd.to_datetime(master["month"], format="%Y-%m", errors="coerce")
     master = master.sort_values(["main_tech", "month_dt"])
 
+    inv_col = "projected_inv_cases" if "projected_inv_cases" in master.columns else "inv_cases"
+
+    # --- MATDI: rolling 12-month demand denominator ---
     master["rolling_12m_demand"] = (
         master.groupby("main_tech")["demand_cases"]
         .transform(lambda x: x.rolling(window=12, min_periods=1).sum())
     )
-
-    inv_col = "projected_inv_cases" if "projected_inv_cases" in master.columns else "inv_cases"
-
     master["matdi"] = (
         master[inv_col].where(master["rolling_12m_demand"] > 0, other=0)
         / master["rolling_12m_demand"].replace(0, float("nan"))
         * 365
     ).fillna(0)
 
+    # --- DOH: forward-looking 2-month demand / 60 days ---
     use_client = client_doh_data if doh_target_override is None else None
 
     if use_client:
@@ -158,19 +158,43 @@ def compute_matdi(
             month = row["month"]
             if tech in use_client and month in use_client[tech]["doh"]:
                 master.at[idx, "doh"] = use_client[tech]["doh"][month]
-            elif row["rolling_12m_demand"] > 0:
-                master.at[idx, "doh"] = row[inv_col] / row["rolling_12m_demand"] * 365
     else:
-        master["doh"] = (
-            master[inv_col].where(master["rolling_12m_demand"] > 0, other=0)
-            / master["rolling_12m_demand"].replace(0, float("nan"))
-            * 365
-        ).fillna(0)
+        # Compute next-2-month demand per tech, then DOH = inv / (next_2m / 60)
+        # For the last month (Dec), only 1 forward month is available in the data
+        # window — scale the denominator proportionally (30 days instead of 60).
+        # If no forward months at all, fall back to current month's demand / 30.
+        results = []
+        for tech, group in master.groupby("main_tech"):
+            group = group.copy().reset_index(drop=True)
+            demand_vals = group["demand_cases"].values
+            n = len(demand_vals)
+            doh_vals = []
+            for i in range(n):
+                fwd_months = 0
+                fwd_demand = 0.0
+                if i + 1 < n:
+                    fwd_demand += demand_vals[i + 1]
+                    fwd_months += 1
+                if i + 2 < n:
+                    fwd_demand += demand_vals[i + 2]
+                    fwd_months += 1
+                if fwd_months == 0:
+                    fwd_demand = demand_vals[i]
+                    fwd_months = 1
+                days_window = fwd_months * 30
+                daily_demand = fwd_demand / days_window if days_window > 0 else 0
+                inv_val = group.at[i, inv_col]
+                doh_vals.append(inv_val / daily_demand if daily_demand > 0 else 0)
+            group["doh"] = doh_vals
+            results.append(group)
+        master = pd.concat(results, ignore_index=True)
 
     config = load_config("manual_adjustments.yaml")
     master["doh_target"] = doh_target_override if doh_target_override is not None else config.get("doh_target", 45)
 
-    master = master.drop(columns=["month_dt"]).reset_index(drop=True)
+    if "next_2m_demand" in master.columns:
+        master = master.drop(columns=["next_2m_demand"])
+    master = master.drop(columns=["month_dt"], errors="ignore").reset_index(drop=True)
     print(f"[calculate] MATDI/DOH computed for {master['main_tech'].nunique()} technologies")
     return master
 
@@ -277,9 +301,19 @@ def compute_bandwidth(
     return bw_df
 
 
-def compare_to_matdi_targets(master: pd.DataFrame) -> pd.DataFrame:
+def compare_to_matdi_targets(
+    master: pd.DataFrame,
+    matdi_target_overrides: dict[str, float] | None = None,
+) -> pd.DataFrame:
     """
     Compare MATDI projections against configured targets at key months (Apr, Aug, EOY).
+
+    Parameters
+    ----------
+    master                : must have 'matdi' column (run compute_matdi first)
+    matdi_target_overrides: optional {"Apr": val, "Aug": val, "Dec": val} that
+                            overrides the config targets for what-if testing.
+
     Returns a DataFrame with: main_tech, month, projected_matdi, target_matdi, diff, status
     """
     if "matdi" not in master.columns:
@@ -287,8 +321,9 @@ def compare_to_matdi_targets(master: pd.DataFrame) -> pd.DataFrame:
 
     config = load_config("manual_adjustments.yaml")
     targets = config.get("matdi_targets", {})
+    if matdi_target_overrides:
+        targets.update(matdi_target_overrides)
 
-    # Build month->target mapping using year from data
     years = master["month"].str[:4].unique()
     year = sorted(years)[-1] if len(years) > 0 else "2026"
 

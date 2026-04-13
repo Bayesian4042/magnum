@@ -11,6 +11,7 @@ Three tabs:
 
 Sidebar controls:
   - DOH Target (days)         — overrides the 45-day default
+  - MATDI Targets (Apr/Aug/Dec) — overrides checkpoint inventory-day targets
   - Attainment % per tech     — what-if on production yield
   - Manual Supply Adjustments — add extra cases to any tech/month
 """
@@ -89,6 +90,7 @@ def compute_results(
     raw: dict,
     attainment_overrides: dict[str, float] | None = None,
     doh_target: float | None = None,
+    matdi_target_overrides: dict[str, float] | None = None,
     manual_supply_adds: list[dict] | None = None,
 ):
     """
@@ -127,8 +129,11 @@ def compute_results(
     bandwidth = calculate.compute_bandwidth(
         master, client_doh_data=use_client_doh, doh_target_override=doh_target,
     )
+    matdi_comparison = calculate.compare_to_matdi_targets(
+        master, matdi_target_overrides=matdi_target_overrides,
+    )
 
-    return master, site_supply, bandwidth
+    return master, site_supply, bandwidth, matdi_comparison
 
 
 # =========================================================================
@@ -161,6 +166,7 @@ with open(CONFIG_DIR / "manual_adjustments.yaml") as _f:
     _config = yaml.safe_load(_f)
 _default_attains = _config.get("attainment_factors", {})
 _default_doh = _config.get("doh_target", 45)
+_default_matdi = _config.get("matdi_targets", {"Apr": 23.68, "Aug": 17.034, "Dec": 18.9})
 
 # Techs that appear in the attainment table (i.e. techs with supply data)
 _attain_techs = sorted(raw["attain_table"]["main_tech"].unique())
@@ -177,7 +183,23 @@ doh_override = doh_input if doh_input != _default_doh else None
 
 st.sidebar.divider()
 
-# --- Control 2: Attainment % overrides ---
+# --- Control 2: MATDI Targets ---
+matdi_overrides: dict[str, float] = {}
+with st.sidebar.expander("MATDI Targets"):
+    st.caption("Inventory-days targets at key checkpoint months. Techs below target are flagged 'At Risk'.")
+    for label, default_val in _default_matdi.items():
+        val = st.number_input(
+            f"{label} target (days)",
+            min_value=0.0, max_value=100.0,
+            value=float(default_val), step=0.5,
+            key=f"matdi_{label}",
+        )
+        if abs(val - default_val) > 0.01:
+            matdi_overrides[label] = val
+
+st.sidebar.divider()
+
+# --- Control 3: Attainment % overrides ---
 attainment_overrides: dict[str, float] = {}
 with st.sidebar.expander("Attainment % Overrides"):
     st.caption("Adjust production yield assumptions per technology. Only forecast (RR) supply is affected.")
@@ -196,7 +218,7 @@ with st.sidebar.expander("Attainment % Overrides"):
 
 st.sidebar.divider()
 
-# --- Control 3: Manual Supply Adjustments ---
+# --- Control 4: Manual Supply Adjustments ---
 if "manual_supply_adds" not in st.session_state:
     st.session_state.manual_supply_adds = []
 
@@ -229,11 +251,14 @@ st.sidebar.caption("Data source: client xlsx files in `/data`")
 
 # --- Show active overrides summary ---
 n_attain_changed = len(attainment_overrides)
+n_matdi_changed = len(matdi_overrides)
 n_supply_adds = len(st.session_state.manual_supply_adds)
-if doh_override or n_attain_changed or n_supply_adds:
+if doh_override or n_matdi_changed or n_attain_changed or n_supply_adds:
     parts = []
     if doh_override:
         parts.append(f"DOH target → {doh_input}")
+    if n_matdi_changed:
+        parts.append(f"{n_matdi_changed} MATDI target(s) changed")
     if n_attain_changed:
         parts.append(f"{n_attain_changed} attainment override(s)")
     if n_supply_adds:
@@ -245,10 +270,11 @@ if doh_override or n_attain_changed or n_supply_adds:
 # COMPUTE RESULTS (reactive — re-runs on every control change)
 # =========================================================================
 try:
-    master, site_supply, bandwidth = compute_results(
+    master, site_supply, bandwidth, matdi_comparison = compute_results(
         raw,
         attainment_overrides=attainment_overrides or None,
         doh_target=doh_override,
+        matdi_target_overrides=matdi_overrides or None,
         manual_supply_adds=st.session_state.manual_supply_adds or None,
     )
     data_loaded = True
@@ -392,6 +418,8 @@ with tab2:
     table_cols[inv_col] = "Inventory"
     if doh_col and doh_col in rccp.columns:
         table_cols[doh_col] = "DOH"
+    if "matdi" in rccp.columns:
+        table_cols["matdi"] = "MATDI"
 
     display_df = rccp[list(table_cols.keys())].rename(columns=table_cols).copy()
     for col in ["Production", "Demand", "Inventory"]:
@@ -399,8 +427,19 @@ with tab2:
             display_df[col] = display_df[col].apply(lambda v: f"{v:,.0f}" if pd.notna(v) else "—")
     if "DOH" in display_df.columns:
         display_df["DOH"] = display_df["DOH"].apply(lambda v: f"{v:.1f}" if pd.notna(v) else "—")
+    if "MATDI" in display_df.columns:
+        display_df["MATDI"] = display_df["MATDI"].apply(lambda v: f"{v:.1f}" if pd.notna(v) and v > 0 else "—")
 
     st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+    # --- MATDI vs Target checkpoints ---
+    if len(matdi_comparison) > 0:
+        tech_matdi = matdi_comparison[matdi_comparison["main_tech"] == selected_tech]
+        if len(tech_matdi) > 0:
+            st.markdown("**MATDI vs Target at Checkpoints**")
+            matdi_display = tech_matdi[["month", "projected_matdi", "target_matdi", "diff", "status"]].copy()
+            matdi_display.columns = ["Month", "Projected MATDI", "Target", "Diff", "Status"]
+            st.dataframe(matdi_display, use_container_width=True, hide_index=True)
 
 
 # =========================================================================
