@@ -1,0 +1,36 @@
+{
+  "name": "generative-ui",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm generate-prompt && next dev",
+    "build": "pnpm generate-prompt && next build",
+    "start": "next start",
+    "lint": "eslint",
+    "generate-prompt": "tsx scripts/generate-prompt.ts"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^3.0.53",
+    "@ai-sdk/react": "^3.0.166",
+    "@openuidev/react-lang": "^0.2.1",
+    "@openuidev/react-ui": "^0.11.2",
+    "ai": "^6.0.164",
+    "next": "16.2.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "recharts": "^2.15.3",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.4",
+    "tailwindcss": "^4",
+    "tsx": "^4.19.3",
+    "typescript": "^5"
+  },
+  "packageManager": "pnpm@10.33.0+sha512.10568bb4a6afb58c9eb3630da90cc9516417abebd3fabbe6739f0ae795728da1491e9db5a544c76ad8eb7570f5c4bb3d6c637b2cb41bfdcdb47fa823c8649319"
+}
